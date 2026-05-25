@@ -2,7 +2,7 @@ import { StyleSheet, View, Text, TextInput, TouchableOpacity, ScrollView, SafeAr
 import { useState } from 'react';
 import { useRouter } from 'expo-router';
 import { useVendorContext } from './_layout';
-import { supabase } from '../../utils/supabase';
+import { stores, products as productsApi } from '../../utils/api';
 
 export default function VendorOnboardingProducts() {
   const [products, setProducts] = useState([{ id: 1, name: '', price: '' }]);
@@ -25,52 +25,34 @@ export default function VendorOnboardingProducts() {
   const handleComplete = async () => {
     try {
       setLoading(true);
-      const user = await supabase.auth.getUser();
-      const vendorId = user.data.user?.id;
-      
-      if (!vendorId) {
-        throw new Error("Not logged in. Session may have expired or email confirmation is required.");
-      }
 
-      // 1. Insert Store
-      const { data: storeData, error: storeError } = await supabase
-        .from('stores')
-        .insert({
-          vendor_id: vendorId,
-          name: data.name,
-          category: data.category,
-          phone: data.phone,
-          location_text: data.location || '',
-          latitude: data.latitude,
-          longitude: data.longitude,
-        })
-        .select('id')
-        .single();
-
-      if (storeError) {
-        console.error(storeError);
-        alert('Failed to save store');
-        return;
-      }
+      // 1. Create Store
+      const storeData = await stores.create({
+        name: data.name,
+        category: data.category,
+        phone: data.phone,
+        location_text: data.location || '',
+        latitude: data.latitude,
+        longitude: data.longitude,
+        upi_id: data.upiId || undefined,
+      });
 
       // 2. Insert Products
       const validProducts = products.filter(p => p.name.trim() !== '');
       if (validProducts.length > 0) {
         const productsToInsert = validProducts.map(p => ({
-          store_id: storeData.id,
-          name: p.name,
-          price: p.price ? `₹${p.price}` : '₹0',
-          is_in_stock: true
+          name: p.name.trim(),
+          price: parseFloat(p.price) || 0,
+          unit: 'piece',
+          is_in_stock: true,
         }));
-
-        const { error: prodError } = await supabase.from('products').insert(productsToInsert);
-        if (prodError) console.log("Product save error", prodError);
+        await productsApi.addToStore(storeData.id, productsToInsert);
       }
 
       // 3. Return to Dashboard
       router.replace('/(tabs)/vendor');
     } catch (e: any) {
-      alert(e.message);
+      alert(e.message || 'Failed to complete setup. Is the backend server running?');
     } finally {
       setLoading(false);
     }

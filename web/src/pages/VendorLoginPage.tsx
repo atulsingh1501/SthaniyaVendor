@@ -1,47 +1,32 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { auth } from '../lib/api';
 import { Phone, ArrowRight, Store, Loader2, ShieldCheck } from 'lucide-react';
 import './VendorLoginPage.css';
 
 export default function VendorLoginPage() {
   const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('testpassword123');
+  const [mode, setMode] = useState<'login' | 'register'>('login');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const navigate = useNavigate();
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (phone.length < 10) return;
     setLoading(true);
     setError('');
 
     try {
-      const fakeEmail = `${phone.trim()}@teststore.com`;
-
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: fakeEmail,
-        password: 'testpassword123',
-      });
-
-      if (signInError) {
-        if (signInError.message.includes('Invalid login credentials')) {
-          setError('No vendor account found for this number. Please register first.');
-        } else if (signInError.message.includes('Email not confirmed')) {
-          setError('Account not confirmed. Go to Supabase → Auth → Email → disable "Confirm email".');
-        } else {
-          setError(signInError.message);
-        }
-        setLoading(false);
-        return;
+      if (mode === 'login') {
+        await auth.login(phone, password);
+      } else {
+        await auth.register(phone, password);
       }
-
-      // Login succeeded — navigate to vendor dashboard.
-      // VendorPage will handle: "no store yet → /vendor-setup" and "not logged in → /vendor-login"
       navigate('/vendor');
-
     } catch (err: any) {
-      setError(err.message || 'Login failed. Please try again.');
+      setError(err.message || 'Something went wrong. Please try again.');
     }
     setLoading(false);
   };
@@ -54,7 +39,7 @@ export default function VendorLoginPage() {
           <div className="login-brand">
             <span className="login-brand-icon">🛍️</span>
             <div>
-              <div className="login-brand-name">Local Store</div>
+              <div className="login-brand-name">SthaniyaVendor</div>
               <div className="login-brand-tag">Vendor Portal</div>
             </div>
           </div>
@@ -89,11 +74,17 @@ export default function VendorLoginPage() {
             <div className="login-card-icon">
               <Store size={24} color="#0F6E56" />
             </div>
-            <h2 className="login-card-title">Vendor Login</h2>
-            <p className="login-card-sub">Enter your registered phone number to continue</p>
+            <h2 className="login-card-title">
+              {mode === 'login' ? 'Vendor Login' : 'Create Account'}
+            </h2>
+            <p className="login-card-sub">
+              {mode === 'login'
+                ? 'Enter your phone and password to continue'
+                : 'Register your vendor account to get started'}
+            </p>
           </div>
 
-          <form className="login-form" onSubmit={handleLogin}>
+          <form className="login-form" onSubmit={handleSubmit}>
             <div className="login-field-label">Phone Number</div>
             <div className="login-phone-wrap">
               <div className="login-phone-prefix">
@@ -114,6 +105,16 @@ export default function VendorLoginPage() {
               />
             </div>
 
+            <div className="login-field-label" style={{ marginTop: 12 }}>Password</div>
+            <input
+              className="login-phone-input"
+              style={{ width: '100%', boxSizing: 'border-box', padding: '10px 14px', borderRadius: 10, border: '1.5px solid #e5e7eb', fontSize: 15, outline: 'none' }}
+              type="password"
+              placeholder="Your password"
+              value={password}
+              onChange={(e) => { setError(''); setPassword(e.target.value); }}
+            />
+
             {error && (
               <div className="login-error fade-up">
                 {error}
@@ -123,30 +124,30 @@ export default function VendorLoginPage() {
             <button
               type="submit"
               className="login-btn"
-              disabled={phone.length < 10 || loading}
+              disabled={phone.length < 10 || !password || loading}
             >
               {loading ? (
-                <><Loader2 size={18} className="spin-icon" /> Signing in…</>
+                <><Loader2 size={18} className="spin-icon" /> {mode === 'login' ? 'Signing in…' : 'Creating account…'}</>
               ) : (
-                <>Sign In <ArrowRight size={18} /></>
+                <>{mode === 'login' ? 'Sign In' : 'Register'} <ArrowRight size={18} /></>
               )}
             </button>
           </form>
 
           <div className="login-divider">
-            <span>New vendor?</span>
+            <span>{mode === 'login' ? 'New vendor?' : 'Already registered?'}</span>
           </div>
 
           <button
             className="register-btn"
-            onClick={() => navigate('/vendor-setup')}
+            onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }}
           >
-            Register your store →
+            {mode === 'login' ? 'Create a new account →' : '← Back to Login'}
           </button>
 
           <div className="login-secure-note">
             <ShieldCheck size={13} />
-            Secured with Supabase Auth
+            Secured with JWT · Powered by FastAPI + PostgreSQL
           </div>
 
           <button

@@ -1,7 +1,7 @@
 import { StyleSheet, View, Text, ScrollView, TouchableOpacity, SafeAreaView, Platform, StatusBar, ActivityIndicator } from 'react-native';
 import { useState, useEffect } from 'react';
 import { useRouter } from 'expo-router';
-import { supabase } from '../../utils/supabase';
+import { auth, stores, products as productsApi } from '../../utils/api';
 
 export default function VendorScreen() {
   const [store, setStore] = useState<any>(null);
@@ -16,32 +16,16 @@ export default function VendorScreen() {
   const fetchVendorData = async () => {
     try {
       setLoading(true);
-      const { data: userAuth } = await supabase.auth.getUser();
-      const vendorId = userAuth.user?.id;
-      
-      if (!vendorId) {
+      const { data: userAuth } = await auth.getUser();
+      if (!userAuth.user) {
         setLoading(false);
         return; // Not logged in yet
       }
 
-      // Fetch the store for this vendor
-      const { data: storeData } = await supabase
-        .from('stores')
-        .select('*')
-        .eq('vendor_id', vendorId)
-        .single();
-        
+      const storeData = await stores.getMyStore();
       if (storeData) {
         setStore(storeData);
-        // Fetch products for this store
-        const { data: productData } = await supabase
-          .from('products')
-          .select('*')
-          .eq('store_id', storeData.id);
-          
-        if (productData) {
-          setProducts(productData);
-        }
+        setProducts(storeData.products || []);
       }
     } catch (e) {
       console.error(e);
@@ -52,21 +36,22 @@ export default function VendorScreen() {
 
   const toggleStock = async (product: any) => {
     const newStatus = !product.is_in_stock;
-    
     // Optimistic update
-    setProducts(products.map(p => 
+    setProducts(products.map(p =>
       p.id === product.id ? { ...p, is_in_stock: newStatus } : p
     ));
-
-    // Update in Supabase
-    await supabase
-      .from('products')
-      .update({ is_in_stock: newStatus })
-      .eq('id', product.id);
+    try {
+      await productsApi.updateStock(product.id, newStatus);
+    } catch (e) {
+      // Revert on failure
+      setProducts(products.map(p =>
+        p.id === product.id ? { ...p, is_in_stock: !newStatus } : p
+      ));
+    }
   };
 
   const handleLogout = async () => {
-    await supabase.auth.signOut();
+    await auth.signOut();
     setStore(null);
     setProducts([]);
   };

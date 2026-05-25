@@ -2,7 +2,7 @@ import { StyleSheet, View, Text, TextInput, TouchableOpacity, SafeAreaView, Plat
 import { useState } from 'react';
 import { useRouter } from 'expo-router';
 import { useVendorContext } from './_layout';
-import { supabase } from '../../utils/supabase';
+import { auth } from '../../utils/api';
 
 export default function VendorOnboardingOTP() {
   const [phone, setPhone] = useState('');
@@ -11,51 +11,20 @@ export default function VendorOnboardingOTP() {
   const { updateData } = useVendorContext();
 
   const handleNext = async () => {
-      setLoading(true);
-      try {
-        // SIMULATED AUTH: We sign up a fake email to give this vendor a real UUID in Supabase.
-        const fakeEmail = `${phone}@teststore.com`;
-        
-        // 1. Try to sign in first
-        let { data, error } = await supabase.auth.signInWithPassword({
-            email: fakeEmail,
-            password: 'testpassword123',
-        });
+    setLoading(true);
+    try {
+      const { user, error } = await auth.signInOrRegister(phone);
+      if (error) throw error;
+      if (!user) throw new Error('Authentication failed. Please try again.');
 
-        // Handle specific "Email not confirmed" error which happens if they tried signing up 
-        // *before* disabling the "Confirm email" setting in Supabase.
-        if (error && error.message.includes('Email not confirmed')) {
-            alert("Error: This test number's account is stuck in an unconfirmed state.\n\n1. Go to Supabase Dashboard -> Authentication -> Providers -> Email and ensure 'Confirm Email' is OFF.\n2. Go to Authentication -> Users, and delete the user ending in @teststore.com.\n3. Try again!");
-            setLoading(false);
-            return;
-        }
-
-        // 2. If user doesn't exist, sign them up
-        if (error && error.message.includes('Invalid login credentials')) {
-            const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-                email: fakeEmail,
-                password: 'testpassword123',
-            });
-            
-            // If Supabase requires email confirmation (which is on by default and skips auto-login)
-            if (!signUpError && !signUpData?.session) {
-                alert("Please go to Supabase Dashboard -> Authentication -> Providers -> Email and turn OFF 'Confirm email', then try again!");
-                setLoading(false);
-                return;
-            }
-            if (signUpError) throw signUpError;
-        } else if (error) {
-            throw error;
-        }
-        
-        updateData({ phone });
-        router.push('/vendor-setup/details');
-      } catch (err: any) {
-        console.error(err);
-        alert(err.message || 'An error occurred during simulated login');
-      } finally {
-        setLoading(false);
-      }
+      updateData({ phone });
+      router.push('/vendor-setup/details');
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || 'An error occurred. Make sure the backend server is running.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (

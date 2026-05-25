@@ -4,6 +4,7 @@ import { useRouter } from "expo-router";
 import { useFocusEffect } from "expo-router";
 import { useNavigation } from "expo-router";
 import { useEffect, useRef, useState, useCallback } from "react";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   Alert,
   Dimensions,
@@ -20,7 +21,7 @@ import {
 import MapView, { Marker, Polyline } from "react-native-maps";
 import MapViewDirections from "react-native-maps-directions";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { supabase } from "../../utils/supabase";
+import { stores as storesApi } from "../../utils/api";
 
 const GOOGLE_MAPS_APIKEY = process.env.EXPO_PUBLIC_GOOGLE_MAPS_API_KEY || "";
 const { width, height } = Dimensions.get("window");
@@ -131,15 +132,21 @@ export default function HomeScreen() {
       1000,
     );
 
-    // 2. Fetch stores
-    const { data, error } = await supabase
-      .from("stores")
-      .select("*, products(count)");
-
-    if (error) {
-      console.error("Error fetching stores", error);
-    } else {
-      setStores(data || []);
+    // 2. Fetch stores from FastAPI backend with Offline Fallback
+    try {
+      const result = await storesApi.list();
+      // API returns { stores: [...], total: N }
+      const storeList = Array.isArray(result) ? result : (result as any).stores || [];
+      setStores(storeList);
+      AsyncStorage.setItem('cached_stores', JSON.stringify(storeList)).catch(() => {});
+    } catch (e) {
+      console.warn("Network error, loading stores from cache...", e);
+      try {
+        const cached = await AsyncStorage.getItem('cached_stores');
+        if (cached) setStores(JSON.parse(cached));
+      } catch (cacheErr) {
+        console.error("Cache read failed", cacheErr);
+      }
     }
   };
 

@@ -1,57 +1,55 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { auth, stores, products } from '../lib/api';
 import { ArrowLeft, ArrowRight, Check, MapPin, Loader2, Trash2 } from 'lucide-react';
 import { CATEGORIES } from '../lib/constants';
 import './VendorSetupPage.css';
 
 const UNITS = ['piece', 'kg', 'g', 'L', 'mL', 'dozen', 'pack'];
 type ProductLine = { name: string; price: string; unit: string };
+type Step = 'auth' | 'details' | 'location' | 'products';
 
-type Step = 'phone' | 'details' | 'location' | 'products';
-
-const STEPS: Step[] = ['phone', 'details', 'location', 'products'];
-const STEP_LABELS = ['Phone', 'Store Info', 'Location', 'Products'];
+const STEPS: Step[] = ['auth', 'details', 'location', 'products'];
+const STEP_LABELS = ['Account', 'Store Info', 'Location', 'Products'];
 
 export default function VendorSetupPage() {
-  const [step, setStep] = useState<Step>('phone');
+  const [step, setStep] = useState<Step>(auth.isLoggedIn() ? 'details' : 'auth');
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const navigate = useNavigate();
 
-  // Step data
+  // Auth step
   const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('testpassword123');
+
+  // Store details
   const [storeName, setStoreName] = useState('');
   const [category, setCategory] = useState('');
+  const [upiId, setUpiId] = useState('');
+
+  // Location
   const [lat, setLat] = useState('');
   const [lng, setLng] = useState('');
   const [locationText, setLocationText] = useState('');
   const [gettingLoc, setGettingLoc] = useState(false);
+
+  // Products
   const [productLines, setProductLines] = useState<ProductLine[]>([{ name: '', price: '', unit: 'piece' }]);
   const [done, setDone] = useState(false);
+  const [storeId, setStoreId] = useState('');
 
   const stepIdx = STEPS.indexOf(step);
 
-  const handlePhoneNext = async () => {
-    if (!phone.trim()) return;
+  const handleAuthNext = async () => {
+    if (!phone.trim() || !password) return;
     setLoading(true);
+    setError('');
     try {
-      const fakeEmail = `${phone.trim()}@teststore.com`;
-      let { error } = await supabase.auth.signInWithPassword({
-        email: fakeEmail, password: 'testpassword123',
-      });
-      if (error?.message?.includes('Invalid login credentials')) {
-        const { data: sd, error: se } = await supabase.auth.signUp({
-          email: fakeEmail, password: 'testpassword123',
-        });
-        if (se) throw se;
-        if (!sd?.session) {
-          alert("Please disable 'Confirm email' in Supabase Dashboard → Authentication → Providers → Email, then try again.");
-          setLoading(false); return;
-        }
-      } else if (error) throw error;
+      // Try register first (idempotent — if already exists, it auto-logs in)
+      await auth.register(phone, password);
       setStep('details');
-    } catch (e: any) {
-      alert(e.message || 'Error during login');
+    } catch (err: any) {
+      setError(err.message || 'Account creation failed');
     }
     setLoading(false);
   };
@@ -80,54 +78,38 @@ export default function VendorSetupPage() {
 
   const handleFinish = async () => {
     setLoading(true);
+    setError('');
     try {
-      const { data: auth } = await supabase.auth.getUser();
-      const vendorId = auth.user?.id;
-      if (!vendorId) throw new Error('Not authenticated');
+      // Create store via API
+      const store = await stores.create({
+        name: storeName.trim(),
+        category,
+        phone: phone.trim(),
+        location_text: locationText.trim() || undefined,
+        latitude: parseFloat(lat),
+        longitude: parseFloat(lng),
+        upi_id: upiId.trim() || undefined,
+      });
 
-      // Create store
-      const { data: storeData, error: storeErr } = await supabase
-        .from('stores')
-        .insert({
-          vendor_id: vendorId,
-          name: storeName.trim(),
-          category,
-          latitude: parseFloat(lat),
-          longitude: parseFloat(lng),
-          location_text: locationText.trim() || undefined,
-          phone: phone.trim(),
-          rating: 4.5,
-        })
-        .select()
-        .single();
-      if (storeErr) throw storeErr;
+      setStoreId(store.id);
 
-      // Add products — try with price/unit, fall back if columns missing
+      // Add initial products
       const validProducts = productLines.filter((p) => p.name.trim());
       if (validProducts.length > 0) {
-        const { error: prodErr } = await supabase.from('products').insert(
+        await products.add(
+          store.id,
           validProducts.map((p) => ({
-            store_id: storeData.id,
             name: p.name.trim(),
             price: parseFloat(p.price) || 0,
             unit: p.unit,
             is_in_stock: true,
           }))
         );
-        // If columns don't exist (400), retry with minimal fields
-        if (prodErr && (prodErr.code === '42703' || prodErr.message?.includes('column'))) {
-          await supabase.from('products').insert(
-            validProducts.map((p) => ({
-              store_id: storeData.id,
-              name: p.name.trim(),
-              is_in_stock: true,
-            }))
-          );
-        }
       }
+
       setDone(true);
-    } catch (e: any) {
-      alert(e.message || 'Error creating store');
+    } catch (err: any) {
+      setError(err.message || 'Error creating store. Make sure backend is running.');
     }
     setLoading(false);
   };
@@ -150,7 +132,6 @@ export default function VendorSetupPage() {
   return (
     <div className="setup-root">
       <div className="setup-card">
-        {/* Back button */}
         <button className="setup-back" onClick={() => stepIdx > 0 ? setStep(STEPS[stepIdx - 1]) : navigate('/')}>
           <ArrowLeft size={16} />
         </button>
@@ -170,29 +151,58 @@ export default function VendorSetupPage() {
         </div>
         <div className="setup-step-label">{STEP_LABELS[stepIdx]}</div>
 
-        {/* Step: Phone */}
-        {step === 'phone' && (
+        {/* Error banner */}
+        {error && (
+          <div style={{
+            background: '#fef2f2', border: '1px solid #fca5a5', color: '#dc2626',
+            borderRadius: 10, padding: '10px 14px', marginBottom: 12, fontSize: 14
+          }}>
+            ⚠️ {error}
+          </div>
+        )}
+
+        {/* Step: Account */}
+        {step === 'auth' && (
           <div className="fade-up">
-            <h2 className="setup-title">Enter your phone number</h2>
-            <p className="setup-sub">We'll use this to identify your vendor account.</p>
+            <h2 className="setup-title">Create your vendor account</h2>
+            <p className="setup-sub">Enter a phone number and password — no email needed!</p>
             <div className="phone-input-wrap">
               <span className="phone-prefix">+91</span>
               <input
                 className="input-field phone-input"
                 placeholder="10-digit mobile number"
                 value={phone}
-                onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+                onChange={(e) => { setError(''); setPhone(e.target.value.replace(/\D/g, '').slice(0, 10)); }}
                 maxLength={10}
                 type="tel"
               />
             </div>
+            <div className="form-group" style={{ marginTop: 12 }}>
+              <label className="form-label">Password</label>
+              <input
+                className="input-field"
+                type="password"
+                placeholder="Set a password"
+                value={password}
+                onChange={(e) => { setError(''); setPassword(e.target.value); }}
+              />
+            </div>
             <button
               className="btn btn-primary btn-lg setup-next-btn"
-              onClick={handlePhoneNext}
-              disabled={phone.length < 10 || loading}
+              onClick={handleAuthNext}
+              disabled={phone.length < 10 || !password || loading}
             >
-              {loading ? 'Verifying…' : <>Verify & Continue <ArrowRight size={18} /></>}
+              {loading ? 'Creating account…' : <>Create Account & Continue <ArrowRight size={18} /></>}
             </button>
+            <p style={{ textAlign: 'center', marginTop: 12, fontSize: 13, color: '#6b7280' }}>
+              Already registered?{' '}
+              <button
+                style={{ background: 'none', border: 'none', color: '#0F6E56', cursor: 'pointer', fontWeight: 600 }}
+                onClick={() => navigate('/vendor-login')}
+              >
+                Sign in instead
+              </button>
+            </p>
           </div>
         )}
 
@@ -208,6 +218,15 @@ export default function VendorSetupPage() {
                 placeholder="e.g. Sharma Grocery"
                 value={storeName}
                 onChange={(e) => setStoreName(e.target.value)}
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">UPI ID for Payments (Optional)</label>
+              <input
+                className="input-field"
+                placeholder="e.g. yourname@ybl"
+                value={upiId}
+                onChange={(e) => setUpiId(e.target.value)}
               />
             </div>
             <div className="form-group">
@@ -277,7 +296,7 @@ export default function VendorSetupPage() {
         {step === 'products' && (
           <div className="fade-up">
             <h2 className="setup-title">Add Your Products</h2>
-            <p className="setup-sub">Add a few key products to attract buyers. You can add more later.</p>
+            <p className="setup-sub">Add a few key products. You can add more from the dashboard later.</p>
             <div className="products-inputs">
               {productLines.map((p, i) => (
                 <div key={i} className="setup-product-row">

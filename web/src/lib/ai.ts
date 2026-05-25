@@ -19,7 +19,7 @@ async function callGemini(prompt: string, imageBase64?: string): Promise<string>
 
 /** Parse a natural-language product description into structured data */
 export async function parseProductText(text: string): Promise<{ name: string; price: number; unit: string }> {
-  const prompt = `Extract product details from this vendor's speech/text. Return ONLY a JSON object with keys: name (string), price (number, 0 if not mentioned), unit (one of: piece, kg, g, L, mL, dozen, pack).
+  const prompt = `Extract product details from this vendor's speech/text, which may be in English, Hindi, or Hinglish (e.g. "ek kilo chawal 50 rupay", "do packet doodh"). Return ONLY a JSON object with keys: name (string in English/Roman script), price (number, 0 if not mentioned), unit (one of: piece, kg, g, L, mL, dozen, pack).
 Text: "${text}"
 JSON:`;
   const raw = await callGemini(prompt);

@@ -61,6 +61,9 @@ export default function BillGenerator({ store, products, onClose }: Props) {
     td { padding: 10px; font-size: 13px; border-bottom: 1px solid #eee; }
     td:last-child, th:last-child { text-align: right; }
     .total-row td { font-size: 15px; font-weight: 800; border-top: 2px solid #0F6E56; color: #0F6E56; border-bottom: none; padding-top: 12px; }
+    .qr-container { text-align: center; margin-top: 24px; padding-top: 16px; border-top: 1px dashed #ccc; }
+    .qr-container img { width: 120px; height: 120px; margin-bottom: 8px; }
+    .qr-text { font-size: 12px; color: #555; font-weight: 600; }
     .footer { text-align: center; margin-top: 24px; font-size: 11px; color: #999; }
   </style>
 </head>
@@ -93,6 +96,11 @@ export default function BillGenerator({ store, products, onClose }: Props) {
       </tr>
     </tfoot>
   </table>
+  <div class="qr-container">
+    <img src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(`upi://pay?pa=${store.upi_id || 'test@ybl'}&pn=${encodeURIComponent(store.name)}&am=${total.toFixed(2)}&cu=INR`)}" />
+    <div class="qr-text">Scan to Pay via UPI</div>
+    ${store.upi_id ? `<div style="font-size: 11px; color: #666; margin-top: 4px;">UPI ID: ${store.upi_id}</div>` : ''}
+  </div>
   <div class="footer">Thank you for shopping locally! 🙏</div>
 </body>
 </html>`;
@@ -184,6 +192,13 @@ export default function BillGenerator({ store, products, onClose }: Props) {
                   </tr>
                 </tfoot>
               </table>
+              
+              <div style={{ textAlign: 'center', marginTop: 24, paddingTop: 16, borderTop: '1px dashed #eee' }}>
+                <img src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(`upi://pay?pa=${store.upi_id || 'test@ybl'}&pn=${encodeURIComponent(store.name)}&am=${total.toFixed(2)}&cu=INR`)}`} alt="UPI QR Code" style={{ width: 120, height: 120, borderRadius: 8, marginBottom: 8 }} />
+                <div style={{ fontSize: 13, fontWeight: 600, color: '#374151' }}>Scan & Pay via UPI</div>
+                <div style={{ fontSize: 12, color: '#6B7280', marginTop: 2 }}>Amount: ₹{total.toFixed(2)}</div>
+                {store.upi_id && <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 4 }}>UPI ID: {store.upi_id}</div>}
+              </div>
             </div>
             <div className="bill-actions-row">
               <button className="btn btn-ghost" onClick={() => setStep('build')}>← Edit</button>

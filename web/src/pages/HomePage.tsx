@@ -1,8 +1,8 @@
-import { useEffect, useState, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import { useEffect, useState } from 'react';
+import { MapContainer, TileLayer, Marker, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { stores as storesApi } from '../lib/api';
 import { CATEGORIES, getCategoryDetails, DEFAULT_LAT, DEFAULT_LNG } from '../lib/constants';
 import { useSpeech } from '../hooks/useSpeech';
 import { Search, Navigation, Phone, Store, Star, X, MapPin, Mic, MicOff } from 'lucide-react';
@@ -64,8 +64,12 @@ export default function HomePage() {
   }, []);
 
   const fetchStores = async () => {
-    const { data } = await supabase.from('stores').select('*, products(count)');
-    setStores(data || []);
+    try {
+      const { stores: data } = await storesApi.list({ limit: 200 });
+      setStores(data || []);
+    } catch (e) {
+      console.error('Failed to load stores:', e);
+    }
     setLoading(false);
   };
 

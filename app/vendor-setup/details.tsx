@@ -7,11 +7,12 @@ export default function VendorOnboardingDetails() {
   const [storeName, setStoreName] = useState('');
   const [category, setCategory] = useState('');
   const [areaText, setAreaText] = useState('');
+  const [upiId, setUpiId] = useState('');
   const router = useRouter();
   const { updateData } = useVendorContext();
 
   const handleNext = () => {
-    updateData({ name: storeName, category, location: areaText });
+    updateData({ name: storeName, category, location: areaText, upiId: upiId.trim() });
     router.push('/vendor-setup/location');
   };
 
@@ -48,6 +49,17 @@ export default function VendorOnboardingDetails() {
             placeholder="e.g. Alkapuri, Vadodara"
             value={areaText}
             onChangeText={setAreaText}
+          />
+        </View>
+
+        <View style={styles.inputContainer}>
+          <Text style={styles.label}>UPI ID for Payments (Optional)</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="e.g. sharma@ybl"
+            value={upiId}
+            onChangeText={setUpiId}
+            autoCapitalize="none"
           />
         </View>
 

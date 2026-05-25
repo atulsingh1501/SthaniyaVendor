@@ -113,7 +113,7 @@ async function loadMobileNet(): Promise<any> {
     import('@tensorflow-models/mobilenet'),
     import('@tensorflow/tfjs'), // ensure backends loaded
   ]);
-  mobilenetModel = await mobilenet.load({ version: 2, alpha: 1.0 });
+  mobilenetModel = await mobilenet.load({ version: 1, alpha: 0.25 });
   modelLoading = false;
   modelLoadCallbacks.forEach((cb) => cb());
   modelLoadCallbacks = [];

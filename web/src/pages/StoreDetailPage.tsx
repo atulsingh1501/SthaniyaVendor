@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { stores as storesApi } from '../lib/api';
 import { ArrowLeft, Star, Phone, Navigation, MessageCircle, Search, X, Bell, Package } from 'lucide-react';
 import './StoreDetailPage.css';
 
@@ -16,12 +16,12 @@ export default function StoreDetailPage() {
   }, [id]);
 
   const fetchStore = async () => {
-    const { data } = await supabase
-      .from('stores')
-      .select('*, products(*)')
-      .eq('id', id)
-      .single();
-    setStore(data);
+    try {
+      const data = await storesApi.get(id!);
+      setStore(data);
+    } catch (e) {
+      console.error('Failed to load store:', e);
+    }
     setLoading(false);
   };
 

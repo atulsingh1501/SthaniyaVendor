@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { supabase } from '../lib/supabase';
+import { auth, stores as storesApi, products as productsApi } from '../lib/api';
 import { parseProductText, lookupBarcode, hasGeminiKey } from '../lib/ai';
 import { recognizeProductImage, preloadImageModel } from '../lib/imageRecognition';
 import { useSpeech } from '../hooks/useSpeech';
@@ -9,7 +9,7 @@ import BillGenerator from '../components/BillGenerator';
 import {
   Store, LogOut, Plus, ToggleLeft, ToggleRight,
   TrendingUp, Phone, Eye, ArrowRight, Package, Pencil, Check, X,
-  Mic, MicOff, Camera, Scan, Receipt, Loader2, AlertCircle
+  Mic, MicOff, Camera, Scan, Receipt, Loader2, AlertCircle, Settings
 } from 'lucide-react';
 import './VendorPage.css';
 
@@ -18,7 +18,14 @@ const UNITS = ['piece', 'kg', 'g', 'L', 'mL', 'dozen', 'pack'];
 export default function VendorPage() {
   const [store, setStore] = useState<any>(null);
   const [products, setProducts] = useState<any[]>([]);
+  const [stats, setStats] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'settings'>('dashboard');
+
+  // Settings form
+  const [settingsForm, setSettingsForm] = useState<any>({});
+  const [savingSettings, setSavingSettings] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Add product form
   const [addName, setAddName] = useState('');
@@ -81,41 +88,42 @@ export default function VendorPage() {
   const fetchVendorData = async () => {
     setLoading(true);
     setFetchError('');
-    const { data: authData } = await supabase.auth.getUser();
-    const vendorId = authData.user?.id;
-    if (!vendorId) {
+
+    if (!auth.isLoggedIn()) {
       navigate('/vendor-login', { replace: true });
       return;
     }
 
-    // Fetch store
-    const { data: storeData, error: storeErr } = await supabase
-      .from('stores').select('*').eq('vendor_id', vendorId).single();
-
-    if (storeErr && storeErr.code !== 'PGRST116') {
-      setFetchError(`Store fetch error: ${storeErr.message}`);
-      setLoading(false);
-      return;
-    }
-
-    if (!storeData) {
-      navigate('/vendor-setup', { replace: true });
-      return;
-    }
-
-    setStore(storeData);
-
-    // Fetch products
-    const { data: productData, error: productErr } = await supabase
-      .from('products')
-      .select('*')
-      .eq('store_id', storeData.id);
-
-    if (productErr) {
-      console.error('Products fetch error:', productErr);
-      setFetchError(`Products fetch error: ${productErr.message} (code: ${productErr.code}). Check your Supabase RLS policies for the products table.`);
-    } else {
-      setProducts(productData || []);
+    try {
+      const storeData = await storesApi.myStore();
+      if (!storeData) {
+        navigate('/vendor-setup', { replace: true });
+        return;
+      }
+      setStore(storeData);
+      setProducts(storeData.products || []);
+      setSettingsForm({
+        name: storeData.name || '',
+        category: storeData.category || '',
+        phone: storeData.phone || '',
+        location_text: storeData.location_text || '',
+        upi_id: storeData.upi_id || ''
+      });
+      
+      // Fetch real stats
+      try {
+        const storeStats = await storesApi.stats(storeData.id);
+        setStats(storeStats);
+      } catch (e) {
+        console.error('Failed to load stats', e);
+      }
+    } catch (err: any) {
+      if (err.message?.includes('Not authenticated') || err.message?.includes('401')) {
+        auth.logout();
+        navigate('/vendor-login', { replace: true });
+        return;
+      }
+      setFetchError(`Failed to load store: ${err.message}`);
     }
 
     setLoading(false);
@@ -124,7 +132,12 @@ export default function VendorPage() {
   const toggleStock = async (product: any) => {
     const newStatus = !product.is_in_stock;
     setProducts(products.map((p) => p.id === product.id ? { ...p, is_in_stock: newStatus } : p));
-    await supabase.from('products').update({ is_in_stock: newStatus }).eq('id', product.id);
+    try {
+      await productsApi.update(product.id, { is_in_stock: newStatus });
+    } catch (err) {
+      // Revert on failure
+      setProducts(products.map((p) => p.id === product.id ? { ...p, is_in_stock: product.is_in_stock } : p));
+    }
   };
 
   const handleAddProduct = async (e: React.FormEvent) => {
@@ -132,39 +145,18 @@ export default function VendorPage() {
     if (!addName.trim() || !store) return;
     setAddingProduct(true);
 
-    // Try inserting with full schema first (price + unit)
-    let { data, error } = await supabase.from('products').insert({
-      store_id: store.id,
-      name: addName.trim(),
-      price: parseFloat(addPrice) || 0,
-      unit: addUnit,
-      is_in_stock: true,
-    }).select('id, name, store_id, is_in_stock, price, unit').single();
-
-    // If columns don't exist (42703 or generic error), fall back to minimal schema
-    if (error) {
-      const fallback = await supabase.from('products').insert({
-        store_id: store.id,
+    try {
+      const [newProduct] = await productsApi.add(store.id, [{
         name: addName.trim(),
+        price: parseFloat(addPrice) || 0,
+        unit: addUnit,
         is_in_stock: true,
-      }).select('id, name, store_id, is_in_stock').single();
-      data = fallback.data;
-      error = fallback.error;
-    }
-
-    if (error) {
-      console.error('Product insert error:', error);
-      setAiStatus(`❌ Save failed: ${error.message}`);
-    } else if (data) {
-      // Merge local price/unit for display (in case DB doesn't have those columns)
-      const displayed = {
-        ...data,
-        price: data.price ?? (parseFloat(addPrice) || 0),
-        unit: data.unit ?? addUnit,
-      };
-      setProducts((prev) => [displayed, ...prev]);
+      }]);
+      setProducts((prev) => [newProduct, ...prev]);
       setAddName(''); setAddPrice(''); setAddUnit('piece');
       setShowAddForm(false); setAiStatus('');
+    } catch (err: any) {
+      setAiStatus(`❌ Save failed: ${err.message}`);
     }
 
     setAddingProduct(false);
@@ -180,7 +172,11 @@ export default function VendorPage() {
     setSavingPrice(true);
     const newPrice = parseFloat(editPriceValue) || 0;
     setProducts(products.map((p) => p.id === productId ? { ...p, price: newPrice, unit: editUnitValue } : p));
-    await supabase.from('products').update({ price: newPrice, unit: editUnitValue }).eq('id', productId);
+    try {
+      await productsApi.update(productId, { price: newPrice, unit: editUnitValue });
+    } catch (err) {
+      console.error('Price update failed:', err);
+    }
     setEditingPriceId(null); setSavingPrice(false);
   };
   const cancelEdit = () => setEditingPriceId(null);
@@ -233,9 +229,23 @@ export default function VendorPage() {
     e.target.value = '';
   };
 
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
+  const handleLogout = () => {
+    auth.logout();
     navigate('/vendor-login');
+  };
+
+  const handleSaveSettings = async () => {
+    setSavingSettings(true);
+    setFetchError('');
+    try {
+      const updatedStore = await storesApi.update(store.id, settingsForm);
+      setStore(updatedStore);
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 3000);
+    } catch (e: any) {
+      setFetchError(e.message || 'Failed to update settings');
+    }
+    setSavingSettings(false);
   };
 
   if (loading) return <div className="vendor-loading"><div className="spinner" /></div>;
@@ -268,7 +278,12 @@ export default function VendorPage() {
           </div>
         </div>
         <nav className="vendor-nav">
-          <div className="nav-item active"><Store size={18} /> Dashboard</div>
+          <div className={`nav-item ${activeTab === 'dashboard' ? 'active' : ''}`} onClick={() => setActiveTab('dashboard')}>
+            <Store size={18} /> Dashboard
+          </div>
+          <div className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`} onClick={() => setActiveTab('settings')}>
+            <Settings size={18} /> Settings
+          </div>
         </nav>
         <div className="vendor-sidebar-footer">
           <button className="logout-btn" onClick={handleLogout}><LogOut size={16} /> Logout</button>
@@ -278,7 +293,9 @@ export default function VendorPage() {
 
       {/* Main */}
       <main className="vendor-main">
-        {/* Header */}
+        {activeTab === 'dashboard' ? (
+          <>
+            {/* Header */}
         <div className="vendor-header">
           <div>
             <div className="vendor-header-label">Manage Store</div>
@@ -296,16 +313,25 @@ export default function VendorPage() {
         {/* Stats */}
         <div className="stats-grid">
           <div className="stat-card">
-            <div className="stat-icon" style={{ background: '#E1F5EE' }}><Eye size={20} color="#0F6E56" /></div>
-            <div><div className="stat-number">142</div><div className="stat-label">Views today</div></div>
+            <div className="stat-icon" style={{ background: '#E1F5EE' }}><Package size={20} color="#0F6E56" /></div>
+            <div>
+              <div className="stat-number">{stats?.total_products || products.length || 0}</div>
+              <div className="stat-label">Total Products</div>
+            </div>
           </div>
           <div className="stat-card">
-            <div className="stat-icon" style={{ background: '#EEF2FF' }}><Phone size={20} color="#4338CA" /></div>
-            <div><div className="stat-number">23</div><div className="stat-label">Calls this week</div></div>
+            <div className="stat-icon" style={{ background: '#EEF2FF' }}><TrendingUp size={20} color="#4338CA" /></div>
+            <div>
+              <div className="stat-number">₹{stats?.avg_price ? Number(stats.avg_price).toFixed(0) : 0}</div>
+              <div className="stat-label">Avg Item Price</div>
+            </div>
           </div>
           <div className="stat-card">
-            <div className="stat-icon" style={{ background: '#FFF8EB' }}><Package size={20} color="#8A5703" /></div>
-            <div><div className="stat-number">{inStock}/{products.length}</div><div className="stat-label">Items in stock</div></div>
+            <div className="stat-icon" style={{ background: '#FFF8EB' }}><Check size={20} color="#8A5703" /></div>
+            <div>
+              <div className="stat-number">{stats?.in_stock || inStock}/{stats?.total_products || products.length}</div>
+              <div className="stat-label">Items in stock</div>
+            </div>
           </div>
         </div>
 
@@ -327,7 +353,7 @@ export default function VendorPage() {
               <div className="fetch-error-title">Could not load products</div>
               <div className="fetch-error-msg">{fetchError}</div>
               <div className="fetch-error-hint">
-                <strong>Fix in Supabase:</strong> Go to Table Editor → products → RLS Policies → add a policy: <code>auth.uid() = (SELECT vendor_id FROM stores WHERE id = store_id)</code>
+                <strong>Tip:</strong> Make sure the FastAPI backend is running at <code>http://localhost:8000</code> and your JWT token is valid.
               </div>
             </div>
             <button className="btn btn-primary" style={{ fontSize: 13, flexShrink: 0 }} onClick={fetchVendorData}>
@@ -469,6 +495,82 @@ export default function VendorPage() {
             </div>
           )}
         </div>
+          </>
+        ) : (
+          <div className="settings-panel fade-up">
+            <div className="vendor-header" style={{ marginBottom: 24 }}>
+              <div>
+                <div className="vendor-header-label">Store Preferences</div>
+                <h1 className="vendor-header-title">Settings</h1>
+              </div>
+            </div>
+
+            <div className="settings-form">
+              <div className="form-group">
+                <label className="form-label">Store Name</label>
+                <input
+                  className="input-field"
+                  value={settingsForm.name}
+                  onChange={e => setSettingsForm({ ...settingsForm, name: e.target.value })}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Category</label>
+                <input
+                  className="input-field"
+                  value={settingsForm.category}
+                  onChange={e => setSettingsForm({ ...settingsForm, category: e.target.value })}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Phone Number</label>
+                <input
+                  className="input-field"
+                  value={settingsForm.phone}
+                  onChange={e => setSettingsForm({ ...settingsForm, phone: e.target.value })}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Location / Area</label>
+                <input
+                  className="input-field"
+                  value={settingsForm.location_text}
+                  onChange={e => setSettingsForm({ ...settingsForm, location_text: e.target.value })}
+                />
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">UPI ID for Payments</label>
+                <input
+                  className="input-field"
+                  value={settingsForm.upi_id}
+                  placeholder="e.g. sharma@ybl"
+                  onChange={e => setSettingsForm({ ...settingsForm, upi_id: e.target.value })}
+                />
+                <p style={{ fontSize: 12, color: '#666', marginTop: 4 }}>This is used to generate QR codes on bills.</p>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: 16 }}>
+                <button 
+                  className="btn btn-primary" 
+                  onClick={handleSaveSettings}
+                  disabled={savingSettings}
+                >
+                  {savingSettings ? <Loader2 size={16} className="spin-icon" /> : <Check size={16} />}
+                  {savingSettings ? ' Saving...' : ' Save Settings'}
+                </button>
+                {saveSuccess && (
+                  <span style={{ color: '#059669', fontSize: 14, fontWeight: 500, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Check size={16} /> Saved successfully
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
