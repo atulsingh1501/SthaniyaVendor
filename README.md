@@ -1,7 +1,6 @@
 # SthaniyaVendor - Hyperlocal Vendor Portal 🛍️
 
-SthaniyaVendor is a comprehensive, production-ready full-stack platform designed to bridge the gap between local brick-and-mortar vendors and digital commerce. It empowers shop owners with a suite of AI tools to digitize their inventory and provides an offline-first discovery map for local buyers.
-
+SthaniyaVendor is a full-stack hyperlocal commerce platform that bridges the gap between local brick-and-mortar vendors and digital commerce. The vendor web dashboard (React + Vite) lets shop owners register via phone/JWT auth, manage inventory using Hinglish voice input powered by Gemini AI, scan product barcodes via Open Food Facts, and identify products through in-browser TensorFlow.js image recognition — all without server latency. The POS generates dynamic UPI QR codes (Google Pay, PhonePe, Paytm) and shares digital receipts via WhatsApp. A companion React Native/Expo mobile app gives local buyers an offline-first map to discover nearby stores even in low-connectivity areas. Backend built with Python, FastAPI, and PostgreSQL.
 ---
 
 ## 🌟 Key Features
